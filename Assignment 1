@@ -1,1 +1,134 @@
+import os
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+
+#----------------------------------Question 1 and 2------------------------------------------
+# Download required NLTK data for tokenization and stopwords
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Define the path to the dataset
+dataset_path = 'data'  # Change this to your actual dataset path
+
+# Initialize a dictionary to store the inverted index
+inverted_index = {}
+
+# Get the list of stop words from NLTK
+stop_words = set(stopwords.words('english'))
+
+
+# Function to preprocess text
+def preprocess_text(text):
+	# Convert text to lowercase
+	text = text.lower()
+
+	# Tokenize the text into words
+	words = word_tokenize(text)
+
+	# Remove stop words and non-alphanumeric characters, and eliminate singly occurring characters
+	processed_words = [
+	    word for word in words
+	    if word.isalnum() and word not in stop_words and len(word) > 1
+	]
+
+	return processed_words
+
+
+# Process each file in the dataset directory
+for filename in os.listdir(dataset_path):
+	if filename.endswith(".txt"):  # Ensure we're reading only .txt files
+		file_path = os.path.join(dataset_path, filename)
+		try:
+			# Open and read the file, ignoring errors
+			with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
+				text = file.read()
+				# Preprocess the text to get a list of words
+				words = preprocess_text(text)
+				# Add words to the inverted index
+				for word in words:
+					if word not in inverted_index:
+						inverted_index[word] = set()
+					inverted_index[word].add(file_path)
+		except Exception as e:
+			print(f"Error reading {file_path}: {e}")
+
+# Convert sets to lists for easier readability and optional saving to file
+for word in inverted_index:
+	inverted_index[word] = list(inverted_index[word])
+
+
+#---------------------------------- Question 3 ----------------------------------------------
+# Function to preprocess queries
+def preprocess_query(sentence, operations):
+	words = preprocess_text(sentence)
+	processed_query = []
+	for i, word in enumerate(words):
+		processed_query.append(word)
+		if i < len(operations):
+			processed_query.append(operations[i])
+	return processed_query
+
+
+# Function to execute the preprocessed query
+def execute_query(processed_query):
+	if not processed_query:
+		return set()
+
+	# Initialize the current set with the documents containing the first term
+	current_set = set(inverted_index.get(processed_query[0], []))
+
+	i = 1
+	while i < len(processed_query):
+		op = processed_query[i]
+		next_term = processed_query[i + 1]
+		next_set = set(inverted_index.get(next_term, []))
+
+		# Apply the operation to the current set and the next set
+		if op == "AND":
+			current_set &= next_set
+		elif op == "OR":
+			current_set |= next_set
+		elif op == "NOT":
+			current_set -= next_set
+
+		i += 2
+
+	return current_set
+
+
+#------------------------------------Question 4 ---------------------------------------------
+# Function to evaluate and print query results
+def evaluate_and_print_results(queries):
+	for i in range(0, len(queries), 2):
+		sentence = queries[i]
+		operations = queries[i + 1]
+		processed_query = preprocess_query(sentence, operations)
+		result_docs = execute_query(processed_query)
+
+		# Print the results of the query evaluation
+		print(f"Input sentence: \"{sentence}\"")
+		print(f"Input operation sequence: {operations}")
+		print(f"Expected preprocessed query: {' '.join(processed_query)}")
+		print(f"Number of matched documents: {len(result_docs)}")
+		print(f"Minimum number of comparisons required: {len(result_docs)}")
+		print(f"List of retrieved document names: {result_docs}")
+		print()
+
+
+# Main function to handle example queries
+def main():
+	# Sample input format: pairs of sentences and operation sequences
+	input_queries = [
+	    "lion stood thoughtfully for a moment", ["OR", "OR", "OR"],
+	    "telephone, paved, roads", ["OR NOT", "AND NOT"]
+	]
+
+	# Evaluating and printing results for the input queries
+	evaluate_and_print_results(input_queries)
+
+
+# Execute the main function if this script is run directly
+if __name__ == "__main__":
+	main()
 
