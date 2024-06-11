@@ -1,0 +1,268 @@
+"""
+This code implements a basic Information Retrieval system that performs document preprocessing, builds a positional index, conducts phrase query search, and calculates TF-IDF matrices for different weighting schemes to retrieve the top relevant documents based on cosine similarity with a given query. It also includes functions for loading documents from a folder and displaying the results of the queries.
+"""
+import os
+import re
+import nltk
+import numpy as np
+import pandas as pd
+from collections import defaultdict, Counter
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from math import log, sqrt
+
+# Download NLTK resources
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Constants
+STOPWORDS = set(stopwords.words('english'))
+
+
+# Helper function to preprocess the text
+def preprocess(text):
+	# Convert to lowercase
+	text = text.lower()
+	# Tokenize
+	tokens = word_tokenize(text)
+	# Remove stopwords and punctuation, and strip spaces
+	tokens = [
+	    token for token in tokens if token.isalpha() and token not in STOPWORDS
+	]
+	return tokens
+
+
+# Q1a: Preprocessing
+def preprocess_documents(documents):
+	# Preprocess each document in the input list
+	preprocessed_docs = []
+	for doc in documents:
+		preprocessed_docs.append(preprocess(doc))
+	return preprocessed_docs
+
+
+# Q1b: Positional Index
+def build_positional_index(documents):
+	# Create a positional index to store the positions of each term in each document
+	positional_index = defaultdict(lambda: defaultdict(list))
+	for doc_id, tokens in enumerate(documents):
+		# Iterate through each token in the document
+		for pos, token in enumerate(tokens):
+			# Add the token to the positional index, along with its position in the document
+			positional_index[token][doc_id].append(pos)
+	return positional_index
+
+
+# Q1c: Phrase Query Search
+def phrase_query_search(positional_index, query, max_len=5):
+	# Preprocess the query and check if it exceeds the maximum allowed length
+	query_tokens = preprocess(query)
+	if len(query_tokens) > max_len:
+		return "Query length exceeds the maximum allowed length of 5."
+
+	# Initialize the result documents set with the documents containing the first query token
+	result_docs = set(positional_index[query_tokens[0]].keys())
+
+	# Iterate through the remaining query tokens and intersect the document sets
+	for i in range(1, len(query_tokens)):
+		current_docs = set(positional_index[query_tokens[i]].keys())
+		result_docs = result_docs.intersection(current_docs)
+
+	# Final set to store the documents that contain the entire phrase
+	final_docs = set()
+
+	# Iterate through each document in the result set
+	for doc_id in result_docs:
+		# Get the positions of each query token in the document
+		positions = [positional_index[token][doc_id] for token in query_tokens]
+		# Iterate through the positions of the first query token
+		for pos in positions[0]:
+			# Check if all the positions of the subsequent tokens are consecutive
+			if all(pos + i in positions[i] for i in range(1, len(query_tokens))):
+				final_docs.add(doc_id)
+
+	# Return the list of document IDs that contain the phrase
+	return list(final_docs)
+
+
+# Q2: TF-IDF Matrix
+def compute_tf(documents):
+	# Calculate the term frequency (TF) for each term in each document
+	tf = []
+	for doc in documents:
+		# Count the occurrences of each term in the document
+		word_count = Counter(doc)
+		tf.append(word_count)
+	return tf
+
+
+def compute_idf(documents):
+	# Calculate the inverse document frequency (IDF) for each term
+	N = len(documents)
+	df = defaultdict(int)
+	for doc in documents:
+		# Get the unique terms in each document
+		unique_terms = set(doc)
+		# Increment the document frequency (DF) for each term
+		for term in unique_terms:
+			df[term] += 1
+	# Calculate the IDF based on the document frequency
+	idf = {term: log(N / (freq + 1)) for term, freq in df.items()}
+	return idf
+
+
+def compute_tf_idf(tf, idf, vocabulary):
+	# Calculate the TF-IDF score for each term in each document
+	tf_idf = []
+	for doc_tf in tf:
+		# Calculate the TF-IDF vector for the document
+		doc_vector = [doc_tf.get(term, 0) * idf[term] for term in vocabulary]
+		tf_idf.append(doc_vector)
+	return tf_idf
+
+
+def generate_tf_idf_matrix(documents, weighting_scheme='raw_count'):
+	# Generate the TF-IDF matrix using different weighting schemes
+	preprocessed_docs = preprocess_documents(documents)
+	vocabulary = sorted(set(token for doc in preprocessed_docs for token in doc))
+	tf = compute_tf(preprocessed_docs)
+	idf = compute_idf(preprocessed_docs)
+
+	# Apply different TF weighting schemes
+	if weighting_scheme == 'binary':
+		# Set the TF to 1 for all terms in each document
+		for doc_tf in tf:
+			for term in doc_tf:
+				doc_tf[term] = 1
+	elif weighting_scheme == 'term_frequency':
+		# Normalize the TF by the total number of terms in the document
+		for doc_tf in tf:
+			total_terms = sum(doc_tf.values())
+			for term in doc_tf:
+				doc_tf[term] /= total_terms
+	elif weighting_scheme == 'log_normalization':
+		# Apply log normalization to the TF
+		for doc_tf in tf:
+			for term in doc_tf:
+				doc_tf[term] = log(1 + doc_tf[term])
+	elif weighting_scheme == 'double_normalization':
+		# Apply double normalization to the TF
+		for doc_tf in tf:
+			max_tf = max(doc_tf.values())
+			for term in doc_tf:
+				doc_tf[term] = 0.5 + 0.5 * (doc_tf[term] / max_tf)
+
+	# Compute the TF-IDF matrix
+	tf_idf_matrix = compute_tf_idf(tf, idf, vocabulary)
+
+	return tf_idf_matrix, vocabulary
+
+
+def query_vector(query, idf, vocabulary):
+	# Create a vector representation of the query
+	query_tokens = preprocess(query)
+	query_count = Counter(query_tokens)
+	query_vec = [
+	    query_count.get(term, 0) * idf.get(term, 0) for term in vocabulary
+	]
+	return query_vec
+
+
+def cosine_similarity(vec1, vec2):
+	# Calculate the cosine similarity between two vectors
+	dot_product = sum(a * b for a, b in zip(vec1, vec2))
+	magnitude_vec1 = sqrt(sum(a * a for a in vec1))
+	magnitude_vec2 = sqrt(sum(b * b for b in vec2))
+	if not magnitude_vec1 or not magnitude_vec2:
+		return 0.0
+	return dot_product / (magnitude_vec1 * magnitude_vec2)
+
+
+def top_relevant_docs(query_vec, tf_idf_matrix, top_n=5):
+	# Find the top N most relevant documents based on cosine similarity
+	similarity_scores = [
+	    cosine_similarity(query_vec, doc_vec) for doc_vec in tf_idf_matrix
+	]
+	top_docs = sorted(range(len(similarity_scores)),
+	                  key=lambda i: similarity_scores[i],
+	                  reverse=True)[:top_n]
+	return top_docs
+
+
+def load_documents_from_folder(folder_path):
+	# Load documents from a specified folder
+	documents = []
+	document_names = []
+	for filename in os.listdir(folder_path):
+		if filename.endswith(".txt"):
+			document_names.append(filename)
+			try:
+				with open(os.path.join(folder_path, filename), 'r',
+				          encoding='utf-8') as file:
+					documents.append(file.read())
+			except UnicodeDecodeError:
+				with open(os.path.join(folder_path, filename), 'r',
+				          encoding='latin-1') as file:
+					documents.append(file.read())
+	return documents, document_names
+
+
+def main():
+	# Load documents from the 'data' folder
+	folder_path = "data"  #Change this to wherever your data is
+	documents, document_names = load_documents_from_folder(folder_path)
+
+	if not documents:
+		print("No documents found in the 'data' folder.")
+		return
+
+	# Q1a: Preprocessing
+	preprocessed_docs = preprocess_documents(documents)
+
+	# Q1b: Build Positional Index
+	positional_index = build_positional_index(preprocessed_docs)
+
+	#Query Examples for Phrase and TF-IDF Search
+	query = "data"
+	#query = "natural language processing"
+	#query = "machine learning techniques"
+	#query = "information retrieval system"
+	#query = "data science"
+	#query = "algorithm"
+	#query = "entropy"
+	#query = "neural network architecture"
+
+	# Q1c: Phrase Query Search
+	phrase_query_results = phrase_query_search(positional_index, query)
+	print(f"Phrase Query: '{query}'")
+	print(f"Number of documents retrieved: {len(phrase_query_results)}")
+	print("List of retrieved document names:", [
+	    document_names[doc_id]
+	    for doc_id in phrase_query_results if doc_id < len(document_names)
+	])
+
+	# Q2: TF-IDF Matrix and Query Scoring
+	print(f"\nQuery: '{query}'")
+	idf = compute_idf(preprocessed_docs)
+	weighting_schemes = [
+	    'binary', 'raw_count', 'term_frequency', 'log_normalization',
+	    'double_normalization'
+	]
+
+	for scheme in weighting_schemes:
+		# Generate TF-IDF matrix for different weighting schemes
+		tf_idf_matrix, vocabulary = generate_tf_idf_matrix(documents, scheme)
+		# Create query vector based on the chosen weighting scheme
+		query_vec = query_vector(query, idf, vocabulary)
+		# Retrieve top 5 documents based on cosine similarity with the query vector
+		top_docs = top_relevant_docs(query_vec, tf_idf_matrix)
+		print(f"\nTop 5 documents using {scheme} scheme:")
+		print(f"Number of documents retrieved: {len(top_docs)}")
+		print("List of retrieved document names:", [
+		    document_names[doc_id]
+		    for doc_id in top_docs if doc_id < len(document_names)
+		])
+
+
+if __name__ == "__main__":
+	main()
